@@ -139,6 +139,7 @@ func dbInfo(name string) (dbinfo DatabaseUrlSpec, err error) {
 
 func dbs() (dbinfo []FullDatabaseSpec, err error) {
 	rows, err := pool.Query("select name, plan, claimed, make_date::varchar(200) as make_date, endpoint, masteruser, masterpass from provision")
+	defer rows.Close()
 	if err == nil {
 		for rows.Next() {
 			var spec FullDatabaseSpec
@@ -444,17 +445,17 @@ func createRole(params martini.Params, r render.Render) {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
 		return
 	}
-	
+	defer db.Close()
 	username := "rdo1" + strings.ToLower(randStringBytes(7))
 	password := randStringBytes(10)
-	_, err = db.Query(strings.Replace(strings.Replace(strings.Replace(strings.Replace(statement, "$1", username , -1), "$2", "'" + password + "'", -1), "$3",  name , -1), "$4", app_username, -1))
-	db.Close()
+	_, err = db.Exec(strings.Replace(strings.Replace(strings.Replace(strings.Replace(statement, "$1", username , -1), "$2", "'" + password + "'", -1), "$3",  name , -1), "$4", app_username, -1))
+	
 	if err != nil {
 		log.Printf("Unable to create user on backing database: %s\n", err.Error())
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
 		return
 	}
-	_, err = pool.Query("insert into extra_roles (database, username, passwd, read_only, make_date, update_date) values ($1, $2, $3, $4, now(), now())", name, username, password, true)
+	_, err = pool.Exec("insert into extra_roles (database, username, passwd, read_only, make_date, update_date) values ($1, $2, $3, $4, now(), now())", name, username, password, true)
 	if err != nil {
 		// TODO: Drop user?
 		log.Printf("Unable to insert the role, there may be an orphen user [%s]: %s\n", username, err.Error())
@@ -512,13 +513,14 @@ func deleteRole(params martini.Params, r render.Render) {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
 		return
 	}
-	_, err = db.Query(strings.Replace(strings.Replace(strings.Replace(statement, "$1", role, -1), "$2", name, -1), app_username, "$3", -1))
-	db.Close()
+	defer db.Close()
+	_, err = db.Exec(strings.Replace(strings.Replace(strings.Replace(statement, "$1", role, -1), "$2", name, -1), app_username, "$3", -1))
+	
 	if err != nil {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
 		return
 	}
-	_, err = pool.Query("delete from extra_roles where database = $1 and username = $2", name, role)
+	_, err = pool.Exec("delete from extra_roles where database = $1 and username = $2", name, role)
 	if err != nil {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
 		return
@@ -538,7 +540,7 @@ func listRoles(params martini.Params, r render.Render) {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
 		return
 	}
-
+	defer rows.Close()
 	var roles []DatabaseUrlSpec
 	for rows.Next() {
 		var role DatabaseUrlSpec
@@ -565,7 +567,7 @@ func getRole(params martini.Params, r render.Render) {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
 		return
 	}
-
+	defer rows.Close()
 	var roles []DatabaseUrlSpec
 	for rows.Next() {
 		var role DatabaseUrlSpec
@@ -613,14 +615,14 @@ func rotateRole(params martini.Params, r render.Render) {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
 		return
 	}
+	defer db.Close()
 	password := randStringBytes(10)
-	_, err = db.Query("alter user " + role + " WITH PASSWORD '" + password + "'")
-	db.Close()
+	_, err = db.Exec("alter user " + role + " WITH PASSWORD '" + password + "'")
 	if err != nil {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
 		return
 	}
-	_, err = pool.Query("update extra_roles set passwd=$3 where database = $1 and username = $2", name, role, password)
+	_, err = pool.Exec("update extra_roles set passwd=$3 where database = $1 and username = $2", name, role, password)
 	if err != nil {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
 		return
@@ -653,15 +655,8 @@ func createDB(spec Provision, berr binding.Errors, r render.Render) {
 	available := isAvailable(instanceName)
 	if available {
 		var dbinfo DatabaseUrlSpec
-		stmt, dberr := pool.Prepare("update provision set claimed=$1 where name=$2")
+		_, dberr := pool.Exec("update provision set claimed=$1 where name=$2", "yes", name)
 
-		if dberr != nil {
-			fmt.Println(dberr)
-			toreturn := dberr.Error()
-			r.JSON(500, map[string]interface{}{"error": toreturn})
-			return
-		}
-		_, dberr = stmt.Exec("yes", name)
 		if dberr != nil {
 			fmt.Println(dberr)
 			toreturn := dberr.Error()
@@ -687,14 +682,13 @@ func createDB(spec Provision, berr binding.Errors, r render.Render) {
 				},
 			}
 
-			resp, awserr := svc.AddTagsToResource(params)
+			_, awserr := svc.AddTagsToResource(params)
 			if awserr != nil {
 				fmt.Println(awserr.Error())
 				toreturn := awserr.Error()
 				r.JSON(500, map[string]interface{}{"error": toreturn})
 				return
 			}
-			fmt.Println(resp)
 		}
 
 		dbinfo, err := dbInfo(name)
@@ -744,16 +738,13 @@ func deleteDB(params martini.Params, r render.Render) {
 			r.JSON(500, map[string]interface{}{"error": dberr.Error()})
 			return
 		}
-
+		defer db.Close()
 		_, err = db.Exec("DROP DATABASE " + name)
-		db.Close()
 		if err != nil {
 			fmt.Printf("Failed to drop database [%s]: %s", name, err.Error())
 			r.JSON(500, map[string]interface{}{"error": err.Error()})
 			return
 		}
-
-		
 	} else {
 		svc := rds.New(session.New(&aws.Config{
 			Region: aws.String(region),
@@ -772,30 +763,13 @@ func deleteDB(params martini.Params, r render.Render) {
 		}
 	}
 
-	fmt.Println("# Deleting")
-	stmt, err := pool.Prepare("delete from provision where name=$1")
+	_, err := pool.Exec("delete from provision where name=$1", name)
 	if err != nil {
 		errorout := make(map[string]interface{})
 		errorout["error"] = err.Error()
 		r.JSON(500, errorout)
 		return
 	}
-	res, err := stmt.Exec(name)
-	if err != nil {
-		errorout := make(map[string]interface{})
-		errorout["error"] = err.Error()
-		r.JSON(500, errorout)
-		return
-	}
-	affect, err := res.RowsAffected()
-	if err != nil {
-		errorout := make(map[string]interface{})
-		errorout["error"] = err.Error()
-		r.JSON(500, errorout)
-		return
-	}
-	fmt.Println(affect, "rows changed")
-
 	r.JSON(200, map[string]interface{}{"status": "deleted"})
 }
 
@@ -886,31 +860,27 @@ func addExtensions(name string, plan string, dbinfo DatabaseUrlSpec) (e error) {
 		fmt.Println(dberr)
 		return dberr
 	}
+	defer db.Close()
 
 	_, err := db.Exec("CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public")
 	if err != nil {
 		fmt.Println(err)
-		db.Close()
 		return err
 	}
 	_, err = db.Exec("CREATE EXTENSION IF NOT EXISTS tablefunc WITH SCHEMA public")
 	if err != nil {
 		fmt.Println(err)
-		db.Close()
 		return err
 	}
 	_, err = db.Exec("CREATE EXTENSION IF NOT EXISTS hstore WITH SCHEMA public")
 	if err != nil {
 		fmt.Println(err)
-		db.Close()
 		return err
 	}
 	_, err = db.Exec("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA public")
 	if err != nil {
-		db.Close()
 		return err
 	}
-	db.Close()
 	return nil
 }
 
