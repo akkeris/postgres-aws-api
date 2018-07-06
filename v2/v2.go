@@ -410,6 +410,9 @@ func createRole(params martini.Params, r render.Render) {
 	  alter default privileges in schema public GRANT SELECT ON TABLES TO $1;
 	  REVOKE CREATE ON SCHEMA public FROM $1;
 	  GRANT USAGE ON SCHEMA public TO $1;
+
+	  ALTER DEFAULT PRIVILEGES FOR USER $4 IN SCHEMA public GRANT SELECT ON SEQUENCES TO $1;
+	  ALTER DEFAULT PRIVILEGES FOR USER $4 IN SCHEMA public GRANT SELECT ON TABLES TO $1;
 	end 
 	$$;
 	`
@@ -421,6 +424,7 @@ func createRole(params martini.Params, r render.Render) {
 		return
 	}
 	
+	app_username := dbinfo.Username
 	master_username := dbinfo.Username
 	master_password := dbinfo.Password
 
@@ -443,7 +447,7 @@ func createRole(params martini.Params, r render.Render) {
 	
 	username := "rdo1" + strings.ToLower(randStringBytes(7))
 	password := randStringBytes(10)
-	_, err = db.Query(strings.Replace(strings.Replace(strings.Replace(statement, "$1", username , -1), "$2", "'" + password + "'", -1), "$3",  name , -1))
+	_, err = db.Query(strings.Replace(strings.Replace(strings.Replace(strings.Replace(statement, "$1", username , -1), "$2", "'" + password + "'", -1), "$3",  name , -1), "$4", app_username, -1))
 	db.Close()
 	if err != nil {
 		log.Printf("Unable to create user on backing database: %s\n", err.Error())
@@ -470,6 +474,9 @@ func deleteRole(params martini.Params, r render.Render) {
 	statement := `
 	do $$
 	begin
+	  ALTER DEFAULT PRIVILEGES FOR USER $3 IN SCHEMA public REVOKE SELECT ON SEQUENCES TO $1;
+	  ALTER DEFAULT PRIVILEGES FOR USER $3 IN SCHEMA public REVOKE SELECT ON TABLES TO $1;
+
 	  revoke usage on schema public FROM $1;
 	  revoke connect on database $2 from $1;
 	  revoke select on all tables in schema public from $1;
@@ -484,6 +491,8 @@ func deleteRole(params martini.Params, r render.Render) {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
 		return
 	}
+
+	app_username := dbinfo.Username
 	master_username := dbinfo.Username
 	master_password := dbinfo.Password
 
@@ -503,7 +512,7 @@ func deleteRole(params martini.Params, r render.Render) {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
 		return
 	}
-	_, err = db.Query(strings.Replace(strings.Replace(statement, "$1", role, -1), "$2", name, -1))
+	_, err = db.Query(strings.Replace(strings.Replace(strings.Replace(statement, "$1", role, -1), "$2", name, -1), app_username, "$3", -1))
 	db.Close()
 	if err != nil {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
