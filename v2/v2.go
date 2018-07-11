@@ -514,7 +514,7 @@ func deleteRole(params martini.Params, r render.Render) {
 		return
 	}
 	defer db.Close()
-	_, err = db.Exec(strings.Replace(strings.Replace(strings.Replace(statement, "$1", role, -1), "$2", name, -1), app_username, "$3", -1))
+	_, err = db.Exec(strings.Replace(strings.Replace(strings.Replace(statement, "$1", role, -1), "$2", name, -1), "$3", app_username, -1))
 	
 	if err != nil {
 		r.JSON(500, map[string]interface{}{"error": err.Error()})
