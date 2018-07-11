@@ -475,6 +475,9 @@ func deleteRole(params martini.Params, r render.Render) {
 	statement := `
 	do $$
 	begin
+	  ALTER DEFAULT PRIVILEGES FOR USER $3 IN SCHEMA public REVOKE SELECT ON SEQUENCES FROM $1;
+	  ALTER DEFAULT PRIVILEGES FOR USER $3 IN SCHEMA public REVOKE SELECT ON TABLES FROM $1;
+
 	  revoke usage on schema public FROM $1;
 	  revoke connect on database $2 from $1;
 	  revoke select on all tables in schema public from $1;
